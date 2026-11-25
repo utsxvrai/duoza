@@ -38,6 +38,20 @@ describe("planInstall", () => {
     ])
   })
 
+  it("after copying a new version, updates the existing install so its recorded version matches", () => {
+    expect(
+      planInstall({
+        marketplaceDir: DIR,
+        marketplaces: [{ name: "duoza", path: DIR }],
+        plugins: [{ id: "duoza@duoza", enabled: true }],
+        newVersion: true,
+      }),
+    ).toEqual([
+      ["plugin", "marketplace", "update", "duoza"],
+      ["plugin", "update", "duoza@duoza"],
+    ])
+  })
+
   it("re-enables a disabled install", () => {
     expect(
       planInstall({

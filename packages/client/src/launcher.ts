@@ -22,6 +22,8 @@ export interface ClaudeState {
   marketplaceDir: string
   marketplaces: MarketplaceInfo[]
   plugins: PluginInfo[]
+  /** True when this run copied a new Duoza version into the marketplace. */
+  newVersion?: boolean
 }
 
 /** The `claude …` invocations that bring this machine to "duoza installed, enabled, up to date". */
@@ -41,8 +43,10 @@ export function planInstall(state: ClaudeState): string[][] {
   const plugin = state.plugins.find((p) => p.id === PLUGIN_ID)
   if (plugin === undefined || freshMarketplace) {
     steps.push(["plugin", "install", PLUGIN_ID])
-  } else if (!plugin.enabled) {
-    steps.push(["plugin", "enable", PLUGIN_ID])
+  } else {
+    // An existing install keeps its recorded version until updated, even though it reads files in place.
+    if (state.newVersion === true) steps.push(["plugin", "update", PLUGIN_ID])
+    if (!plugin.enabled) steps.push(["plugin", "enable", PLUGIN_ID])
   }
   for (const other of state.plugins) {
     if (other.id !== PLUGIN_ID && other.id.startsWith("duoza@") && other.enabled) {
@@ -140,8 +144,9 @@ export function assertNodeVersion(): void {
 export function install(version: string, log: (line: string) => void): void {
   assertNodeVersion()
   const target = defaultMarketplaceDir()
-  if (syncMarketplace(packagedMarketplaceDir(), target, version)) log(`Copied Duoza ${version} to ${target}`)
-  for (const step of planInstall(readClaudeState(target))) {
+  const newVersion = syncMarketplace(packagedMarketplaceDir(), target, version)
+  if (newVersion) log(`Copied Duoza ${version} to ${target}`)
+  for (const step of planInstall({ ...readClaudeState(target), newVersion })) {
     log(`claude ${step.join(" ")}`)
     claude(step)
   }
