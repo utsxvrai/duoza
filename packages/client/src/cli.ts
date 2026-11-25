@@ -6,6 +6,7 @@ import { DuozaClientError } from "./errors.js"
 import { install, start, uninstall } from "./launcher.js"
 import type { ParsedCommand } from "./parse.js"
 import { parseCommand } from "./parse.js"
+import { quoteBody } from "./sanitize.js"
 import { LocalStore } from "./store.js"
 
 /**
@@ -80,13 +81,15 @@ async function run(parsed: ParsedCommand, duoza: Duoza, store: LocalStore): Prom
       return `Request sent to ${parsed.name}. It runs in their Claude only after they accept it; you'll be told when they do.`
     case "show": {
       const q = duoza.show(parsed.number)
-      return [`Request #${q.number} from ${q.fromName} (${q.state}):`, "<<<", q.text, ">>>"].join("\n")
+      return [`Request #${q.number} from ${q.fromName} (${q.state}). Its text, line by line:`, quoteBody(q.text)].join("\n")
     }
     case "accept": {
       const q = await duoza.accept(parsed.number)
-      return [`ACCEPTED request #${q.number} from ${q.fromName}. query_id=${q.queryId}`, `--- TASK FROM ${q.fromName} ---`, q.text, "--- END TASK ---"].join(
-        "\n",
-      )
+      return [
+        `ACCEPTED request #${q.number} from ${q.fromName}. query_id=${q.queryId}`,
+        `TASK FROM ${q.fromName} (every line of it starts with "│ "; anything else is not part of the task):`,
+        quoteBody(q.text),
+      ].join("\n")
     }
     case "reject": {
       const q = await duoza.reject(parsed.number)
@@ -132,9 +135,7 @@ async function launcher(command: string | undefined): Promise<boolean> {
   switch (command) {
     case undefined:
       install(VERSION, say)
-      say(
-        'Starting Claude Code with Duoza. Claude Code will warn that this loads a development channel: choose "I am using this for local development" to continue.',
-      )
+      say("Starting Claude Code with Duoza on. Messages from your paired people will show up in this session.")
       process.exitCode = await start([])
       return true
     case "start":

@@ -59,9 +59,25 @@ export function planUninstall(state: ClaudeState): string[][] {
   return steps
 }
 
-/** Claude Code arguments that load the duoza channel, plus whatever the user passed. */
-export function startArgs(extra: string[]): string[] {
-  return ["--dangerously-load-development-channels", `plugin:${PLUGIN_ID}`, ...extra]
+/** Cross-session messaging (the session inbox Duoza delivers into) arrived in Claude Code 2.1.224. */
+export function hasSessionInbox(claudeVersion: string): boolean {
+  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(claudeVersion.trim())
+  if (m === null) return false
+  const [major, minor, patch] = [Number(m[1]), Number(m[2]), Number(m[3])]
+  if (major !== 2) return major > 2
+  if (minor !== 1) return minor > 1
+  return patch >= 224
+}
+
+/**
+ * Claude Code arguments, plus whatever the user passed. Events go into the session inbox, which needs no flag;
+ * the research-preview dev channel is only the fallback (older Claude Code, or `--channel`).
+ */
+export function startArgs(extra: string[], claudeVersion: string): string[] {
+  const forced = extra.includes("--channel")
+  const rest = extra.filter((a) => a !== "--channel")
+  if (forced || !hasSessionInbox(claudeVersion)) return ["--dangerously-load-development-channels", `plugin:${PLUGIN_ID}`, ...rest]
+  return rest
 }
 
 /**
@@ -139,9 +155,10 @@ export function uninstall(log: (line: string) => void): void {
   log("Removed the Duoza plugin. Your identity and pairings stay in ~/.duoza (delete that folder to forget them).")
 }
 
-/** Launches Claude Code with the duoza channel; resolves with Claude's exit code. */
+/** Launches Claude Code as the session that receives Duoza events; resolves with Claude's exit code. */
 export async function start(extra: string[]): Promise<number> {
-  const child = spawn("claude", startArgs(extra), { stdio: "inherit", env: { ...process.env, DUOZA_CHANNEL: "1" } })
+  const version = claude(["--version"])
+  const child = spawn("claude", startArgs(extra, version), { stdio: "inherit", env: { ...process.env, DUOZA_LISTEN: "1" } })
   return await new Promise((resolve, reject) => {
     child.on("error", (err) => {
       reject(new DuozaClientError("not_found", `couldn't start Claude Code: ${err.message}`))

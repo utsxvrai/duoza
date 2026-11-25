@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
-import { planInstall, planUninstall, startArgs, syncMarketplace } from "../src/launcher.js"
+import { hasSessionInbox, planInstall, planUninstall, startArgs, syncMarketplace } from "../src/launcher.js"
 
 const DIR = "/home/x/.duoza/marketplace"
 
@@ -88,8 +88,26 @@ describe("planUninstall", () => {
 })
 
 describe("startArgs", () => {
-  it("loads the duoza channel and passes the user's own args through", () => {
-    expect(startArgs(["--resume"])).toEqual(["--dangerously-load-development-channels", "plugin:duoza@duoza", "--resume"])
+  it("on a Claude Code with the session inbox, needs no dev-channel flag", () => {
+    expect(startArgs(["--resume"], "2.1.332 (Claude Code)")).toEqual(["--resume"])
+  })
+
+  it("falls back to the dev channel on Claude Code older than the session inbox, or when asked", () => {
+    expect(startArgs([], "2.1.200 (Claude Code)")).toEqual(["--dangerously-load-development-channels", "plugin:duoza@duoza"])
+    expect(startArgs(["--channel", "--resume"], "2.1.332")).toEqual(["--dangerously-load-development-channels", "plugin:duoza@duoza", "--resume"])
+  })
+
+  it("an unreadable version uses the dev channel to be safe", () => {
+    expect(startArgs([], "garbage")).toEqual(["--dangerously-load-development-channels", "plugin:duoza@duoza"])
+  })
+})
+
+describe("hasSessionInbox", () => {
+  it("compares the Claude Code version against 2.1.224", () => {
+    expect(hasSessionInbox("2.1.224")).toBe(true)
+    expect(hasSessionInbox("2.2.0 (Claude Code)")).toBe(true)
+    expect(hasSessionInbox("2.1.223")).toBe(false)
+    expect(hasSessionInbox("1.9.999")).toBe(false)
   })
 })
 

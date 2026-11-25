@@ -18,7 +18,8 @@ Please open a private security advisory on the GitHub repository instead of a pu
 | Guessing a pairing code | Codes are 6 characters from a 31-character alphabet, single-use, valid 10 minutes, and claim attempts are rate-limited per IP. |
 | A request running without consent | The receiving session gets only "request #n arrived". The text is revealed by `/duoza:show` and runs only via `/duoza:accept`, which you type yourself (`disable-model-invocation` keeps Claude from invoking these skills). |
 | Shell injection through what you type | Skill arguments reach the CLI on stdin via a quoted heredoc; they are never interpolated into a shell command. An earlier design passed `$ARGUMENTS` on the command line and was injectable (`hi; echo INJECTED` executed); this was found in testing and replaced. |
-| A session silently swallowing messages | Only a session started with `DUOZA_CHANNEL=1` (what `npx duoza` does) receives and acknowledges mail. |
+| A session silently swallowing messages | Only a session started with `DUOZA_LISTEN=1` (what `npx duoza` does) receives and acknowledges mail. |
+| A message impersonating Duoza or the user | Peer text is always rendered behind `│ ` with control, format and bidi characters shown as `·`; only Duoza's own lines are flush left. Events go through Claude Code's session inbox, which labels them as coming from another session, never as the user's own words or approval. |
 | Flooding the relay | Per-IP limits on pairing codes and open connections, per-device message rate limits, mailbox caps and a 7-day TTL. |
 
 ## What Duoza does NOT protect against

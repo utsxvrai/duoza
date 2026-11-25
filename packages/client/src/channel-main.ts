@@ -6,6 +6,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { createChannelServer } from "./channel.js"
 import { resolveHome, resolveRelayUrl } from "./config.js"
 import { Duoza } from "./core.js"
+import { findInbox } from "./inbox.js"
 import { LocalStore } from "./store.js"
 
 const store = new LocalStore(resolveHome())
@@ -20,20 +21,25 @@ const log = (line: string): void => {
   }
 }
 
+const inbox = (): { path: string; token: string | undefined } | null => {
+  const path = findInbox({ env: process.env, ppid: process.ppid, uid: process.getuid?.() ?? 0 })
+  return path === null ? null : { path, token: process.env.CLAUDE_CODE_MESSAGING_TOKEN }
+}
+
 const duoza = new Duoza({ store, relayUrl: resolveRelayUrl(store) })
-const handle = createChannelServer({ duoza, log })
+const handle = createChannelServer({ duoza, log, inbox })
+
+// Only the session the user started for Duoza (`npx duoza` sets DUOZA_LISTEN=1) may receive and ack mail:
+// other sessions that load the plugin would otherwise compete for it. DUOZA_CHANNEL=1 is the 0.1.x name.
+const listening = process.env.DUOZA_LISTEN === "1" || process.env.DUOZA_CHANNEL === "1"
 
 handle.server.oninitialized = () => {
-  // Diagnostic: what does Claude Code advertise when it loads this server as a channel vs. not?
-  log(
-    `initialized by ${JSON.stringify(handle.server.getClientVersion())} capabilities=${JSON.stringify(handle.server.getClientCapabilities())} DUOZA_CHANNEL=${process.env.DUOZA_CHANNEL ?? ""}`,
-  )
-  // Only the session that shows Duoza events may receive (and ack) mail. A session that loaded the
-  // plugin without the channel would silently swallow messages, so listening is opt-in for now.
-  if (process.env.DUOZA_CHANNEL === "1") {
+  const target = inbox()
+  log(`initialized; listening=${listening} inbox=${target === null ? "none (channel fallback)" : target.path}`)
+  if (listening) {
     void handle.startRelay()
   } else {
-    log("not listening: start Claude with DUOZA_CHANNEL=1 and --dangerously-load-development-channels plugin:duoza@duoza-local to receive events")
+    log("not listening: start Claude Code with `npx duoza` (or DUOZA_LISTEN=1 claude) to receive Duoza events here")
   }
 }
 

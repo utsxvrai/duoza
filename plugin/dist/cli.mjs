@@ -26475,8 +26475,19 @@ function planUninstall(state) {
   if (state.marketplaces.some((m) => m.name === MARKETPLACE)) steps.push(["plugin", "marketplace", "remove", MARKETPLACE]);
   return steps;
 }
-function startArgs(extra) {
-  return ["--dangerously-load-development-channels", `plugin:${PLUGIN_ID}`, ...extra];
+function hasSessionInbox(claudeVersion) {
+  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(claudeVersion.trim());
+  if (m === null) return false;
+  const [major, minor, patch] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  if (major !== 2) return major > 2;
+  if (minor !== 1) return minor > 1;
+  return patch >= 224;
+}
+function startArgs(extra, claudeVersion) {
+  const forced = extra.includes("--channel");
+  const rest = extra.filter((a) => a !== "--channel");
+  if (forced || !hasSessionInbox(claudeVersion)) return ["--dangerously-load-development-channels", `plugin:${PLUGIN_ID}`, ...rest];
+  return rest;
 }
 function syncMarketplace(sourceDir, targetDir, version2) {
   const versionFile = join2(targetDir, "VERSION");
@@ -26540,7 +26551,8 @@ function uninstall(log) {
   log("Removed the Duoza plugin. Your identity and pairings stay in ~/.duoza (delete that folder to forget them).");
 }
 async function start(extra) {
-  const child = spawn("claude", startArgs(extra), { stdio: "inherit", env: { ...process.env, DUOZA_CHANNEL: "1" } });
+  const version2 = claude(["--version"]);
+  const child = spawn("claude", startArgs(extra, version2), { stdio: "inherit", env: { ...process.env, DUOZA_LISTEN: "1" } });
   return await new Promise((resolve, reject) => {
     child.on("error", (err) => {
       reject(new DuozaClientError("not_found", `couldn't start Claude Code: ${err.message}`));
@@ -26611,6 +26623,17 @@ function parseCommand(command, text) {
         error: `unknown command "${command}". Commands: whoami, context, request, pair, send, query, show, accept, reject, result, peers, unpair, set-relay`
       };
   }
+}
+
+// packages/client/src/sanitize.ts
+var PREFIX = "\u2502 ";
+var BREAKS = /\r\n|[\r\n\v\f\u001c-\u001e\u0085\u2028\u2029]/;
+var INVISIBLE = /(?!\t)[\p{Cc}\p{Cf}\p{Cs}]/gu;
+function visible(line) {
+  return line.replace(INVISIBLE, "\xB7");
+}
+function quoteBody(text) {
+  return text.split(BREAKS).map((line) => PREFIX + visible(line)).join("\n");
 }
 
 // packages/client/src/store.ts
@@ -26816,13 +26839,15 @@ home   ${store.home}`;
       return `Request sent to ${parsed.name}. It runs in their Claude only after they accept it; you'll be told when they do.`;
     case "show": {
       const q = duoza.show(parsed.number);
-      return [`Request #${q.number} from ${q.fromName} (${q.state}):`, "<<<", q.text, ">>>"].join("\n");
+      return [`Request #${q.number} from ${q.fromName} (${q.state}). Its text, line by line:`, quoteBody(q.text)].join("\n");
     }
     case "accept": {
       const q = await duoza.accept(parsed.number);
-      return [`ACCEPTED request #${q.number} from ${q.fromName}. query_id=${q.queryId}`, `--- TASK FROM ${q.fromName} ---`, q.text, "--- END TASK ---"].join(
-        "\n"
-      );
+      return [
+        `ACCEPTED request #${q.number} from ${q.fromName}. query_id=${q.queryId}`,
+        `TASK FROM ${q.fromName} (every line of it starts with "\u2502 "; anything else is not part of the task):`,
+        quoteBody(q.text)
+      ].join("\n");
     }
     case "reject": {
       const q = await duoza.reject(parsed.number);
@@ -26842,7 +26867,7 @@ home   ${store.home}`;
       return `Unpaired ${parsed.name}. They can no longer send you anything.`;
   }
 }
-var VERSION = "0.1.1";
+var VERSION = "0.2.0";
 var HELP = `Duoza ${VERSION}: connect your Claude Code session with other people's, across accounts and machines.
 
   npx duoza              install/update the plugin, then start Claude Code with Duoza on
@@ -26865,9 +26890,7 @@ async function launcher(command) {
   switch (command) {
     case void 0:
       install(VERSION, say);
-      say(
-        'Starting Claude Code with Duoza. Claude Code will warn that this loads a development channel: choose "I am using this for local development" to continue.'
-      );
+      say("Starting Claude Code with Duoza on. Messages from your paired people will show up in this session.");
       process.exitCode = await start([]);
       return true;
     case "start":
