@@ -1,0 +1,32 @@
+{
+  "name": "duoza-monorepo",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -b packages/protocol packages/relay packages/client",
+    "build:plugin": "node scripts/build-plugin.mjs",
+    "lint": "biome check",
+    "lint:fix": "biome check --write",
+    "build:npm": "node scripts/build-npm.mjs"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.6.9",
+    "@types/node": "^26.6.10",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.12"
+  },
+  "version": "0.1.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/utsxvrai/duoza.git"
+  },
+  "homepage": "https://github.com/utsxvrai/duoza#readme"
+}

@@ -1,0 +1,26 @@
+# Duoza relay: Fastify + WebSocket + SQLite. Built from the monorepo root.
+FROM node:20-bookworm-slim AS build
+# Toolchain for better-sqlite3 when no prebuilt binary matches the platform.
+# (Build stage only; none of this reaches the final image.)
+RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++
+WORKDIR /app
+COPY package.json package-lock.json tsconfig.base.json ./
+COPY packages/protocol/package.json packages/protocol/
+COPY packages/relay/package.json packages/relay/
+COPY packages/client/package.json packages/client/
+RUN npm ci --workspace @duoza/relay --workspace @duoza/protocol --include-workspace-root
+COPY packages/protocol packages/protocol
+COPY packages/relay packages/relay
+RUN npx tsc -b packages/relay && npm prune --omit=dev --workspace @duoza/relay --workspace @duoza/protocol
+
+FROM node:20-bookworm-slim
+ENV NODE_ENV=production
+WORKDIR /app
+COPY --from=build /app/node_modules node_modules
+COPY --from=build /app/packages/protocol/package.json packages/protocol/package.json
+COPY --from=build /app/packages/protocol/dist packages/protocol/dist
+COPY --from=build /app/packages/relay/package.json packages/relay/package.json
+COPY --from=build /app/packages/relay/dist packages/relay/dist
+# Fly mounts the /data volume owned by root: fix ownership, then drop to the unprivileged node user.
+EXPOSE 8080
+CMD ["sh", "-c", "mkdir -p /data && chown node:node /data && exec setpriv --reuid=node --regid=node --init-groups node packages/relay/dist/main.js"]

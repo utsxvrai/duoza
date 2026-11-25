@@ -1,0 +1,5 @@
+{
+  "mcpServers": {
+    "duoza": { "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/dist/channel.mjs"] }
+  }
+}

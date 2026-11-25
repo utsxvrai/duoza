@@ -1,0 +1,33 @@
+{
+  "name": "@duoza/relay",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "duoza-relay": "dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run",
+    "start": "node dist/main.js"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/ws": "^8.18.2"
+  },
+  "dependencies": {
+    "@duoza/protocol": "*",
+    "@fastify/websocket": "^11.3.7",
+    "better-sqlite3": "^12.11.1",
+    "fastify": "^5.12.8",
+    "ws": "^8.23.0"
+  }
+}

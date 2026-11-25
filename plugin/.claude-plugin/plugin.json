@@ -1,0 +1,22 @@
+{
+  "name": "duoza",
+  "displayName": "Duoza",
+  "version": "0.1.0",
+  "description": "Connect your Claude Code session with a friend's or teammate's session, even on different Claude accounts and machines: pair with a code, chat, send requests they accept before they run, and hand off context.",
+  "author": {
+    "name": "utsxvrai"
+  },
+  "license": "MIT",
+  "keywords": [
+    "pairing",
+    "collaboration",
+    "channels",
+    "handoff"
+  ],
+  "channels": [
+    {
+      "server": "duoza",
+      "displayName": "Duoza"
+    }
+  ]
+}

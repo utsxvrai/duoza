@@ -1,0 +1,12 @@
+{
+  "name": "duoza",
+  "description": "Duoza: connect your Claude Code session with other people's, across accounts and machines",
+  "owner": { "name": "utsxvrai" },
+  "plugins": [
+    {
+      "name": "duoza",
+      "source": "./plugin",
+      "description": "Pair with a code, chat, send requests that run only after the other person accepts, and hand off context"
+    }
+  ]
+}
