@@ -26842,7 +26842,7 @@ home   ${store.home}`;
       return `Unpaired ${parsed.name}. They can no longer send you anything.`;
   }
 }
-var VERSION = "0.1.0";
+var VERSION = "0.1.1";
 var HELP = `Duoza ${VERSION}: connect your Claude Code session with other people's, across accounts and machines.
 
   npx duoza              install/update the plugin, then start Claude Code with Duoza on
