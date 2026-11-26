@@ -1,9 +1,9 @@
 ---
-name: query
+name: ask
 description: Ask a paired person's Claude to do a task; it runs only after they accept it
 disable-model-invocation: true
 allowed-tools: Bash(node *)
-argument-hint: <name> <task for their Claude>
+argument-hint: [name] <task for their Claude>
 ---
 ```!
 node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" query <<'DUOZA_ARGS_9c41d7'

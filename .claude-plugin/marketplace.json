@@ -4,7 +4,7 @@
   "owner": { "name": "utsxvrai" },
   "plugins": [
     {
-      "name": "duoza",
+      "name": "duo",
       "source": "./plugin",
       "description": "Pair with a code, chat, send requests that run only after the other person accepts, and hand off context"
     }

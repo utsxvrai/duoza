@@ -5,8 +5,15 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { DuozaClientError } from "./errors.js"
 
-export const PLUGIN_ID = "duoza@duoza"
+/** The plugin is named "duo" so its commands are short: /duo:add, /duo:msg, /duo:ok … */
+export const PLUGIN_ID = "duo@duoza"
 const MARKETPLACE = "duoza"
+/** Earlier releases installed the same plugin under this id; it must not run alongside the new one. */
+const LEGACY_PLUGIN_IDS = ["duoza@duoza"]
+
+function isOurs(id: string): boolean {
+  return id.startsWith("duo@") || id.startsWith("duoza@")
+}
 
 export interface MarketplaceInfo {
   name: string
@@ -29,6 +36,9 @@ export interface ClaudeState {
 /** The `claude …` invocations that bring this machine to "duoza installed, enabled, up to date". */
 export function planInstall(state: ClaudeState): string[][] {
   const steps: string[][] = []
+  for (const legacy of state.plugins) {
+    if (LEGACY_PLUGIN_IDS.includes(legacy.id)) steps.push(["plugin", "uninstall", legacy.id])
+  }
   const existing = state.marketplaces.find((m) => m.name === MARKETPLACE)
   let freshMarketplace = false
   if (existing === undefined) {
@@ -49,7 +59,7 @@ export function planInstall(state: ClaudeState): string[][] {
     if (!plugin.enabled) steps.push(["plugin", "enable", PLUGIN_ID])
   }
   for (const other of state.plugins) {
-    if (other.id !== PLUGIN_ID && other.id.startsWith("duoza@") && other.enabled) {
+    if (other.id !== PLUGIN_ID && !LEGACY_PLUGIN_IDS.includes(other.id) && isOurs(other.id) && other.enabled) {
       steps.push(["plugin", "disable", other.id])
     }
   }
@@ -58,7 +68,9 @@ export function planInstall(state: ClaudeState): string[][] {
 
 export function planUninstall(state: ClaudeState): string[][] {
   const steps: string[][] = []
-  if (state.plugins.some((p) => p.id === PLUGIN_ID)) steps.push(["plugin", "uninstall", PLUGIN_ID])
+  for (const p of state.plugins) {
+    if (p.id === PLUGIN_ID || LEGACY_PLUGIN_IDS.includes(p.id)) steps.push(["plugin", "uninstall", p.id])
+  }
   if (state.marketplaces.some((m) => m.name === MARKETPLACE)) steps.push(["plugin", "marketplace", "remove", MARKETPLACE])
   return steps
 }

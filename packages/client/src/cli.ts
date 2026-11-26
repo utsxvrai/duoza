@@ -51,7 +51,10 @@ function minutesUntil(ts: number): number {
 async function run(parsed: ParsedCommand, duoza: Duoza, store: LocalStore): Promise<string> {
   switch (parsed.cmd) {
     case "whoami":
-      return `device ${duoza.identity.deviceId}\nrelay  ${resolveRelayUrl(store)}\nhome   ${store.home}`
+      return `name   ${duoza.displayName}\ndevice ${duoza.identity.deviceId}\nrelay  ${resolveRelayUrl(store)}\nhome   ${store.home}`
+    case "name":
+      if (parsed.name === undefined) return `You go by "${duoza.displayName}". Change it with /duo:name <new name>.`
+      return `You'll now go by "${duoza.setDisplayName(parsed.name)}" for people you pair with from now on.`
     case "context":
       return gitContext()
     case "set-relay":
@@ -59,10 +62,11 @@ async function run(parsed: ParsedCommand, duoza: Duoza, store: LocalStore): Prom
       return `Relay set to ${parsed.url}`
     case "request": {
       const { code, expiresAt } = await duoza.request(parsed.name)
+      const who = parsed.name ?? "them"
       return [
-        `Pairing code for ${parsed.name}: ${code}`,
-        `It works once and expires in ${minutesUntil(expiresAt)} minutes.`,
-        `Send it to ${parsed.name}; in their Claude Code they run: /duoza:pair <your name> ${code}`,
+        `Pairing code: ${code}`,
+        `It works once and expires in ${minutesUntil(expiresAt)} minutes. They'll see you as "${duoza.displayName}".`,
+        `Send it to ${who}; in their Claude Code they run: /duo:join ${code}`,
       ].join("\n")
     }
     case "pair": {
@@ -70,15 +74,19 @@ async function run(parsed: ParsedCommand, duoza: Duoza, store: LocalStore): Prom
       return [
         `Paired with ${name}.`,
         `Safety emoji: ${fingerprint.join(" ")}`,
-        `Check that ${name} sees exactly the same 4 emoji (call or WhatsApp). If they differ, run /duoza:unpair ${name}.`,
+        `Check that ${name} sees exactly the same 4 emoji (call or WhatsApp). If they differ, run /duo:bye ${name}.`,
       ].join("\n")
     }
-    case "send":
-      await duoza.send(parsed.name, parsed.text)
-      return `Sent to ${parsed.name}.`
-    case "query":
-      await duoza.query(parsed.name, parsed.text)
-      return `Request sent to ${parsed.name}. It runs in their Claude only after they accept it; you'll be told when they do.`
+    case "send": {
+      const { name, text } = duoza.splitTarget(parsed.input)
+      await duoza.send(name, text)
+      return `Sent to ${name}.`
+    }
+    case "query": {
+      const { name, text } = duoza.splitTarget(parsed.input)
+      await duoza.query(name, text)
+      return `Request sent to ${name}. It runs in their Claude only after they accept it (/duo:ok); you'll be told when they do.`
+    }
     case "show": {
       const q = duoza.show(parsed.number)
       return [`Request #${q.number} from ${q.fromName} (${q.state}). Its text, line by line:`, quoteBody(q.text)].join("\n")
@@ -101,12 +109,13 @@ async function run(parsed: ParsedCommand, duoza: Duoza, store: LocalStore): Prom
     }
     case "peers": {
       const peers = await duoza.peers()
-      if (peers.length === 0) return "No peers yet. Start with /duoza:request <name>."
+      if (peers.length === 0) return "No peers yet. Start with /duo:add <name>."
       return peers.map((p) => `${p.name}  ${p.status}  ${p.fingerprint.join("")}`).join("\n")
     }
-    case "unpair":
-      await duoza.unpair(parsed.name)
-      return `Unpaired ${parsed.name}. They can no longer send you anything.`
+    case "unpair": {
+      const { name } = await duoza.unpair(parsed.name)
+      return `Unpaired ${name}. They can no longer send you anything.`
+    }
   }
 }
 
@@ -120,10 +129,11 @@ const HELP = `Duoza ${VERSION}: connect your Claude Code session with other peop
   duoza uninstall        remove the plugin (keeps your identity in ~/.duoza)
   duoza version
 
-Inside Claude Code: /duoza:request <name>, /duoza:pair <name> <code>, /duoza:msg, /duoza:query,
-/duoza:show, /duoza:accept, /duoza:reject, /duoza:peers, /duoza:handoff, /duoza:unpair, /duoza:setup
+Inside Claude Code: /duo:add, /duo:join <code>, /duo:msg [name] <text>, /duo:ask [name] <task>,
+/duo:show <n>, /duo:ok <n>, /duo:no <n>, /duo:who, /duo:share, /duo:bye, /duo:name, /duo:setup
+Or just tell Claude: "tell Gaurav the fix is pushed", "who's online?", "invite Priya".
 
-Low-level (used by the plugin): whoami, context, request, pair, send, query, show, accept, reject,
+Low-level (used by the plugin): whoami, name, context, request, pair, send, query, show, accept, reject,
 result, peers, unpair, set-relay
 `
 

@@ -10,7 +10,7 @@ describe("planInstall", () => {
   it("fresh machine: add the marketplace, then install the plugin", () => {
     expect(planInstall({ marketplaceDir: DIR, marketplaces: [], plugins: [] })).toEqual([
       ["plugin", "marketplace", "add", DIR],
-      ["plugin", "install", "duoza@duoza"],
+      ["plugin", "install", "duo@duoza"],
     ])
   })
 
@@ -19,7 +19,7 @@ describe("planInstall", () => {
       planInstall({
         marketplaceDir: DIR,
         marketplaces: [{ name: "duoza", path: DIR }],
-        plugins: [{ id: "duoza@duoza", enabled: true }],
+        plugins: [{ id: "duo@duoza", enabled: true }],
       }),
     ).toEqual([["plugin", "marketplace", "update", "duoza"]])
   })
@@ -29,12 +29,12 @@ describe("planInstall", () => {
       planInstall({
         marketplaceDir: DIR,
         marketplaces: [{ name: "duoza", path: "/old/place" }],
-        plugins: [{ id: "duoza@duoza", enabled: true }],
+        plugins: [{ id: "duo@duoza", enabled: true }],
       }),
     ).toEqual([
       ["plugin", "marketplace", "remove", "duoza"],
       ["plugin", "marketplace", "add", DIR],
-      ["plugin", "install", "duoza@duoza"],
+      ["plugin", "install", "duo@duoza"],
     ])
   })
 
@@ -43,12 +43,12 @@ describe("planInstall", () => {
       planInstall({
         marketplaceDir: DIR,
         marketplaces: [{ name: "duoza", path: DIR }],
-        plugins: [{ id: "duoza@duoza", enabled: true }],
+        plugins: [{ id: "duo@duoza", enabled: true }],
         newVersion: true,
       }),
     ).toEqual([
       ["plugin", "marketplace", "update", "duoza"],
-      ["plugin", "update", "duoza@duoza"],
+      ["plugin", "update", "duo@duoza"],
     ])
   })
 
@@ -57,11 +57,11 @@ describe("planInstall", () => {
       planInstall({
         marketplaceDir: DIR,
         marketplaces: [{ name: "duoza", path: DIR }],
-        plugins: [{ id: "duoza@duoza", enabled: false }],
+        plugins: [{ id: "duo@duoza", enabled: false }],
       }),
     ).toEqual([
       ["plugin", "marketplace", "update", "duoza"],
-      ["plugin", "enable", "duoza@duoza"],
+      ["plugin", "enable", "duo@duoza"],
     ])
   })
 
@@ -74,7 +74,7 @@ describe("planInstall", () => {
           { name: "duoza-local", path: "/dev/duoza" },
         ],
         plugins: [
-          { id: "duoza@duoza", enabled: true },
+          { id: "duo@duoza", enabled: true },
           { id: "duoza@duoza-local", enabled: true },
         ],
       }),
@@ -83,18 +83,40 @@ describe("planInstall", () => {
       ["plugin", "disable", "duoza@duoza-local"],
     ])
   })
+
+  it("upgrading from the old plugin name: uninstalls duoza@duoza, installs duo@duoza", () => {
+    expect(
+      planInstall({
+        marketplaceDir: DIR,
+        marketplaces: [{ name: "duoza", path: DIR }],
+        plugins: [{ id: "duoza@duoza", enabled: true }],
+        newVersion: true,
+      }),
+    ).toEqual([
+      ["plugin", "uninstall", "duoza@duoza"],
+      ["plugin", "marketplace", "update", "duoza"],
+      ["plugin", "install", "duo@duoza"],
+    ])
+  })
 })
 
 describe("planUninstall", () => {
+  it("also removes an install under the old plugin name", () => {
+    expect(planUninstall({ marketplaceDir: DIR, marketplaces: [{ name: "duoza", path: DIR }], plugins: [{ id: "duoza@duoza", enabled: true }] })).toEqual([
+      ["plugin", "uninstall", "duoza@duoza"],
+      ["plugin", "marketplace", "remove", "duoza"],
+    ])
+  })
+
   it("removes the plugin and the marketplace when present", () => {
     expect(
       planUninstall({
         marketplaceDir: DIR,
         marketplaces: [{ name: "duoza", path: DIR }],
-        plugins: [{ id: "duoza@duoza", enabled: true }],
+        plugins: [{ id: "duo@duoza", enabled: true }],
       }),
     ).toEqual([
-      ["plugin", "uninstall", "duoza@duoza"],
+      ["plugin", "uninstall", "duo@duoza"],
       ["plugin", "marketplace", "remove", "duoza"],
     ])
     expect(planUninstall({ marketplaceDir: DIR, marketplaces: [], plugins: [] })).toEqual([])
@@ -107,12 +129,12 @@ describe("startArgs", () => {
   })
 
   it("falls back to the dev channel on Claude Code older than the session inbox, or when asked", () => {
-    expect(startArgs([], "2.1.200 (Claude Code)")).toEqual(["--dangerously-load-development-channels", "plugin:duoza@duoza"])
-    expect(startArgs(["--channel", "--resume"], "2.1.332")).toEqual(["--dangerously-load-development-channels", "plugin:duoza@duoza", "--resume"])
+    expect(startArgs([], "2.1.200 (Claude Code)")).toEqual(["--dangerously-load-development-channels", "plugin:duo@duoza"])
+    expect(startArgs(["--channel", "--resume"], "2.1.332")).toEqual(["--dangerously-load-development-channels", "plugin:duo@duoza", "--resume"])
   })
 
   it("an unreadable version uses the dev channel to be safe", () => {
-    expect(startArgs([], "garbage")).toEqual(["--dangerously-load-development-channels", "plugin:duoza@duoza"])
+    expect(startArgs([], "garbage")).toEqual(["--dangerously-load-development-channels", "plugin:duo@duoza"])
   })
 })
 

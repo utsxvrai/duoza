@@ -75,6 +75,35 @@ afterEach(async () => {
 })
 
 describe("duoza end to end (two people, one relay)", () => {
+  it("pairing without typing names: each side gets the name the other chose", async () => {
+    const utsav = await side({ listen: true })
+    const gaurav = await side({ listen: true })
+    utsav.duoza.setDisplayName("Utsav")
+    gaurav.duoza.setDisplayName("Gaurav Sir")
+    const { code } = await utsav.duoza.request()
+    const theirs = await gaurav.duoza.pair(undefined, code)
+    expect(theirs.name).toBe("Utsav")
+    expect(await utsav.next((e) => e.kind === "paired")).toMatchObject({ kind: "paired", name: "Gaurav_Sir" })
+  })
+
+  it("a chosen name that's already taken here gets a suffix instead of failing", async () => {
+    const utsav = await side({ listen: true })
+    const first = await side({ listen: false })
+    const second = await side({ listen: false })
+    first.duoza.setDisplayName("Rahul")
+    second.duoza.setDisplayName("Rahul")
+    await first.duoza.pair(undefined, (await utsav.duoza.request()).code)
+    await utsav.next((e) => e.kind === "paired")
+    await second.duoza.pair(undefined, (await utsav.duoza.request()).code)
+    await utsav.next((e) => e.kind === "paired" && e.name === "Rahul_2")
+    expect(
+      utsav.store
+        .listPeers()
+        .map((p) => p.name)
+        .sort(),
+    ).toEqual(["Rahul", "Rahul_2"])
+  })
+
   it("pairs with a code and both sides see the same emoji fingerprint", async () => {
     const utsav = await side({ listen: true })
     const priyanshi = await side({ listen: true })

@@ -5992,7 +5992,7 @@ var require_websocket_server = __commonJS({
 });
 
 // packages/client/src/cli.ts
-import { execFileSync as execFileSync2 } from "node:child_process";
+import { execFileSync as execFileSync3 } from "node:child_process";
 
 // packages/client/src/config.ts
 import { homedir } from "node:os";
@@ -25953,8 +25953,9 @@ var PublicIdentitySchema = external_exports.object({
     return false;
   }
 }, { message: "deviceId does not match signPublicKey" });
-var PairStartBodySchema = external_exports.object({ identity: PublicIdentitySchema }).strict();
-var PairClaimBodySchema = external_exports.object({ code: external_exports.string().min(1).max(32), identity: PublicIdentitySchema }).strict();
+var DisplayNameSchema = external_exports.string().min(1).max(32).regex(/^[\p{L}\p{M}\p{N}_-]+$/u);
+var PairStartBodySchema = external_exports.object({ identity: PublicIdentitySchema, displayName: DisplayNameSchema.optional() }).strict();
+var PairClaimBodySchema = external_exports.object({ code: external_exports.string().min(1).max(32), identity: PublicIdentitySchema, displayName: DisplayNameSchema.optional() }).strict();
 var ClientFrameSchema = external_exports.discriminatedUnion("t", [
   external_exports.object({
     t: external_exports.literal("auth"),
@@ -25991,6 +25992,28 @@ function normalizePairingCode(input2) {
       return null;
   }
   return compact;
+}
+
+// packages/client/src/display-name.ts
+import { execFileSync } from "node:child_process";
+import { userInfo } from "node:os";
+function toDisplayName(raw) {
+  const name = raw.normalize("NFC").trim().replace(/\s+/g, "_").replace(/[^\p{L}\p{M}\p{N}_-]/gu, "").slice(0, 32);
+  return name.length > 0 ? name : null;
+}
+function defaultDisplayName() {
+  try {
+    const gitName = execFileSync("git", ["config", "--global", "user.name"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 3e3 });
+    const fromGit = toDisplayName(gitName);
+    if (fromGit !== null) return fromGit;
+  } catch {
+  }
+  try {
+    const fromOs = toDisplayName(userInfo().username);
+    if (fromOs !== null) return fromOs;
+  } catch {
+  }
+  return "friend";
 }
 
 // packages/client/src/errors.ts
@@ -26209,39 +26232,95 @@ var Duoza = class {
   get wsUrl() {
     return `${this.relayUrl.replace(/^http/, "ws")}/v1/ws`;
   }
+  // ---- who I am ----------------------------------------------------------------------
+  /** The name I offer to people I pair with: set with `name`, else git's user.name, else the OS username. */
+  get displayName() {
+    return this.store.getConfig().displayName ?? defaultDisplayName();
+  }
+  setDisplayName(raw) {
+    const name = toDisplayName(raw);
+    if (name === null) throw new DuozaClientError("invalid_name", `"${raw}" can't be a name: use letters, digits, _ or -`);
+    this.store.setConfig({ ...this.store.getConfig(), displayName: name });
+    return name;
+  }
   // ---- pairing -------------------------------------------------------------------
-  /** Creates a one-time code to hand to `name`. */
+  /**
+   * Creates a one-time code. `name` is what you'll call them; leave it out to use the name they send
+   * when they join.
+   */
   async request(name) {
-    this.store.assertValidName(name);
-    if (this.store.findPeer(name) !== null) {
-      throw new DuozaClientError("name_taken", `you already have a peer called "${name}"`);
+    if (name !== void 0) {
+      this.store.assertValidName(name);
+      if (this.store.findPeer(name) !== null) {
+        throw new DuozaClientError("name_taken", `you already have a peer called "${name}"`);
+      }
     }
-    const res = await this.post("/v1/pair/start", { identity: this.publicIdentity() });
+    const res = await this.post("/v1/pair/start", { identity: this.publicIdentity(), displayName: this.displayName });
     if (res.status !== 200) throw new DuozaClientError("relay_error", `relay refused to create a code (${res.status})`);
     const { code, expiresAt } = res.body;
-    this.store.addPendingPair(normalizePairingCode(code) ?? code, name, expiresAt);
+    this.store.addPendingPair(normalizePairingCode(code) ?? code, name ?? null, expiresAt);
     return { code, expiresAt };
   }
-  /** Redeems a code someone gave you; `name` is what you'll call them. */
+  /** Redeems a code someone gave you. `name` is what you'll call them; leave it out to use the name they chose. */
   async pair(name, code) {
-    this.store.assertValidName(name);
-    if (this.store.findPeer(name) !== null) {
-      throw new DuozaClientError("name_taken", `you already have a peer called "${name}"`);
+    if (name !== void 0) {
+      this.store.assertValidName(name);
+      if (this.store.findPeer(name) !== null) {
+        throw new DuozaClientError("name_taken", `you already have a peer called "${name}"`);
+      }
     }
     if (normalizePairingCode(code) === null) {
       throw new DuozaClientError("bad_code", "that doesn't look like a Duoza code (it should look like K7P-42Q)");
     }
-    const res = await this.post("/v1/pair/claim", { code, identity: this.publicIdentity() });
+    const res = await this.post("/v1/pair/claim", { code, identity: this.publicIdentity(), displayName: this.displayName });
     if (res.status === 404) throw new DuozaClientError("bad_code", "that code is wrong, already used, or expired; ask for a new one");
     if (res.status === 429) throw new DuozaClientError("rate_limited", "too many attempts; wait a minute and try again");
     if (res.status === 400) throw new DuozaClientError("bad_code", "you can't pair with yourself");
     if (res.status !== 200) throw new DuozaClientError("relay_error", `relay refused the code (${res.status})`);
-    const peer = PublicIdentitySchema.safeParse(res.body.peer);
+    const body = res.body;
+    const peer = PublicIdentitySchema.safeParse(body.peer);
     if (!peer.success) throw new DuozaClientError("relay_error", "relay sent a malformed identity");
-    this.store.addPeer(name, peer.data, this.now());
-    return { name, fingerprint: fingerprint(this.identity.signPublicKey, peer.data.signPublicKey) };
+    const finalName = name ?? this.store.uniqueName(toDisplayName(typeof body.displayName === "string" ? body.displayName : "") ?? "friend");
+    this.store.addPeer(finalName, peer.data, this.now());
+    return { name: finalName, fingerprint: fingerprint(this.identity.signPublicKey, peer.data.signPublicKey) };
   }
   // ---- sending -------------------------------------------------------------------
+  /**
+   * Splits "<name> <message>" where the name may be several words ("Gaurav Sir hi" -> Gaurav_Sir, "hi").
+   * Tries the longest run of leading words (joined with "_") that matches a paired person. With exactly one
+   * paired person the name is optional and the whole input is the message. Otherwise the first word is taken
+   * as the name, so an unknown name is reported by name. The message keeps its own spacing.
+   */
+  splitTarget(input2) {
+    const trimmed = input2.trim();
+    const words = [...trimmed.matchAll(/\S+/g)].map((m) => ({ word: m[0], end: (m.index ?? 0) + m[0].length }));
+    const noMessage = () => new DuozaClientError("not_found", "add a message, e.g. /duo:msg Gaurav pushed the fix");
+    for (let k = Math.min(4, words.length); k >= 1; k--) {
+      const peer = this.store.findPeer(
+        words.slice(0, k).map((w) => w.word).join("_")
+      );
+      if (peer !== null) {
+        const text2 = trimmed.slice(words[k - 1].end).trim();
+        if (text2 === "") throw noMessage();
+        return { name: peer.name, text: text2 };
+      }
+    }
+    if (trimmed === "") throw noMessage();
+    const peers = this.store.listPeers();
+    if (peers.length === 1) return { name: peers[0].name, text: trimmed };
+    const first = words[0];
+    const text = trimmed.slice(first.end).trim();
+    if (peers.length > 1 && text === "") throw this.whoError();
+    if (text === "") throw noMessage();
+    return { name: first.word, text };
+  }
+  /** A paired person by name; with no name, the only paired person (or an error asking who). */
+  resolvePeerName(name) {
+    if (name !== void 0 && name.trim() !== "") return name;
+    const peers = this.store.listPeers();
+    if (peers.length === 1) return peers[0].name;
+    throw this.whoError();
+  }
   async send(name, text) {
     await this.sendPayload(this.requirePeer(name), { type: "msg", text });
   }
@@ -26253,7 +26332,9 @@ var Duoza = class {
     return { queryId };
   }
   async handoff(name, packet) {
-    await this.sendPayload(this.requirePeer(name), { type: "handoff", ...packet });
+    const peer = this.requirePeer(this.resolvePeerName(name));
+    await this.sendPayload(peer, { type: "handoff", ...packet });
+    return { to: peer.name };
   }
   // ---- receiving a query ---------------------------------------------------------
   show(number4) {
@@ -26297,11 +26378,12 @@ var Duoza = class {
     }));
   }
   async unpair(name) {
-    const peer = this.requirePeer(name);
+    const peer = this.requirePeer(this.resolvePeerName(name));
     await this.withSender(async (conn) => {
       await conn.unpair(peer.identity.deviceId);
     });
     this.store.removePeer(peer.name);
+    return { name: peer.name };
   }
   // ---- listening -------------------------------------------------------------------
   /** Opens the long-lived connection; every delivery becomes at most one event. */
@@ -26321,9 +26403,10 @@ var Duoza = class {
   async handleDelivery(delivery) {
     switch (delivery.kind) {
       case "pair_claimed": {
-        const name = this.store.takePendingPair(delivery.code, this.now());
+        const pending = this.store.takePendingPair(delivery.code, this.now());
         const peer = PublicIdentitySchema.safeParse(delivery.peer);
-        if (name === null || !peer.success) return null;
+        if (pending === null || !peer.success) return null;
+        const name = pending.name ?? this.store.uniqueName(toDisplayName(delivery.displayName ?? "") ?? "friend");
         try {
           this.store.addPeer(name, peer.data, this.now());
         } catch {
@@ -26379,6 +26462,16 @@ var Duoza = class {
     if (q === null) throw new DuozaClientError("not_found", `no request #${number4}`);
     return { ...q, fromName: this.store.findPeerByDevice(q.from)?.name ?? "(unpaired)" };
   }
+  whoError() {
+    const names = this.store.listPeers().map((p) => p.name);
+    if (names.length === 0) {
+      return new DuozaClientError(
+        "unknown_peer",
+        this.store.hasAnyPendingPair(this.now()) ? "they haven't used your code yet (or your Duoza session isn't running to hear about it)" : "you're not paired with anyone yet: start with /duo:add"
+      );
+    }
+    return new DuozaClientError("unknown_peer", `who should get it? Start with their name: ${names.join(", ")}`);
+  }
   requirePeer(name) {
     const peer = this.store.findPeer(name);
     if (peer === null) {
@@ -26391,7 +26484,7 @@ var Duoza = class {
       const known = this.store.listPeers().map((p) => p.name);
       throw new DuozaClientError(
         "unknown_peer",
-        `no peer called "${name}"${known.length > 0 ? ` (you have: ${known.join(", ")})` : " (pair first with /duoza:request)"}`
+        `no peer called "${name}"${known.length > 0 ? ` (you have: ${known.join(", ")})` : " (pair first with /duo:add)"}`
       );
     }
     return peer;
@@ -26436,15 +26529,22 @@ var Duoza = class {
 };
 
 // packages/client/src/launcher.ts
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync as execFileSync2, spawn } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir as homedir2 } from "node:os";
 import { dirname, join as join2 } from "node:path";
 import { fileURLToPath } from "node:url";
-var PLUGIN_ID = "duoza@duoza";
+var PLUGIN_ID = "duo@duoza";
 var MARKETPLACE = "duoza";
+var LEGACY_PLUGIN_IDS = ["duoza@duoza"];
+function isOurs(id) {
+  return id.startsWith("duo@") || id.startsWith("duoza@");
+}
 function planInstall(state) {
   const steps = [];
+  for (const legacy of state.plugins) {
+    if (LEGACY_PLUGIN_IDS.includes(legacy.id)) steps.push(["plugin", "uninstall", legacy.id]);
+  }
   const existing = state.marketplaces.find((m) => m.name === MARKETPLACE);
   let freshMarketplace = false;
   if (existing === void 0) {
@@ -26459,11 +26559,12 @@ function planInstall(state) {
   const plugin = state.plugins.find((p) => p.id === PLUGIN_ID);
   if (plugin === void 0 || freshMarketplace) {
     steps.push(["plugin", "install", PLUGIN_ID]);
-  } else if (!plugin.enabled) {
-    steps.push(["plugin", "enable", PLUGIN_ID]);
+  } else {
+    if (state.newVersion === true) steps.push(["plugin", "update", PLUGIN_ID]);
+    if (!plugin.enabled) steps.push(["plugin", "enable", PLUGIN_ID]);
   }
   for (const other of state.plugins) {
-    if (other.id !== PLUGIN_ID && other.id.startsWith("duoza@") && other.enabled) {
+    if (other.id !== PLUGIN_ID && !LEGACY_PLUGIN_IDS.includes(other.id) && isOurs(other.id) && other.enabled) {
       steps.push(["plugin", "disable", other.id]);
     }
   }
@@ -26471,7 +26572,9 @@ function planInstall(state) {
 }
 function planUninstall(state) {
   const steps = [];
-  if (state.plugins.some((p) => p.id === PLUGIN_ID)) steps.push(["plugin", "uninstall", PLUGIN_ID]);
+  for (const p of state.plugins) {
+    if (p.id === PLUGIN_ID || LEGACY_PLUGIN_IDS.includes(p.id)) steps.push(["plugin", "uninstall", p.id]);
+  }
   if (state.marketplaces.some((m) => m.name === MARKETPLACE)) steps.push(["plugin", "marketplace", "remove", MARKETPLACE]);
   return steps;
 }
@@ -26511,7 +26614,7 @@ function packagedMarketplaceDir() {
 }
 function claude(args) {
   try {
-    return execFileSync("claude", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    return execFileSync2("claude", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   } catch (err) {
     const e = err;
     if (e.code === "ENOENT") {
@@ -26537,8 +26640,9 @@ function assertNodeVersion() {
 function install(version2, log) {
   assertNodeVersion();
   const target = defaultMarketplaceDir();
-  if (syncMarketplace(packagedMarketplaceDir(), target, version2)) log(`Copied Duoza ${version2} to ${target}`);
-  for (const step of planInstall(readClaudeState(target))) {
+  const newVersion = syncMarketplace(packagedMarketplaceDir(), target, version2);
+  if (newVersion) log(`Copied Duoza ${version2} to ${target}`);
+  for (const step of planInstall({ ...readClaudeState(target), newVersion })) {
     log(`claude ${step.join(" ")}`);
     claude(step);
   }
@@ -26565,17 +26669,18 @@ async function start(extra) {
 
 // packages/client/src/parse.ts
 var USAGE = {
-  "set-relay": "usage: duoza set-relay <https://relay.example>",
-  request: "usage: duoza request <name>",
-  pair: "usage: duoza pair <their name> <code>",
-  send: "usage: duoza send <name> <message>",
-  query: "usage: duoza query <name> <what their Claude should do>",
-  show: "usage: duoza show <request number>",
-  accept: "usage: duoza accept <request number>",
-  reject: "usage: duoza reject <request number>",
-  result: "usage: duoza result <query id> <summary>",
-  unpair: "usage: duoza unpair <name>"
+  "set-relay": "usage: /duo:setup <https://relay.example>",
+  pair: "usage: /duo:join <code>   e.g. /duo:join K7P-42Q   (or /duo:join <their name> <code>)",
+  send: "usage: /duo:msg [name] <message>   e.g. /duo:msg pushed the fix",
+  query: "usage: /duo:ask [name] <what their Claude should do>",
+  show: "usage: /duo:show <request number>",
+  accept: "usage: /duo:ok <request number>",
+  reject: "usage: /duo:no <request number>",
+  result: "usage: duoza result <query id> <summary>"
 };
+function joinName(words) {
+  return words.join("_");
+}
 function headAndRest(input2) {
   const m = /^(\S+)\s+([\s\S]*\S)$/.exec(input2.trim());
   return m === null ? null : [m[1], m[2]];
@@ -26600,14 +26705,15 @@ function parseCommand(command, text) {
       return words.length === 1 ? { cmd: "set-relay", url: words[0] } : usage();
     case "request":
     case "unpair":
-      return words.length === 1 ? { cmd: command, name: words[0] } : usage();
+    case "name":
+      return words.length >= 1 ? { cmd: command, name: joinName(words) } : { cmd: command };
     case "pair":
-      return words.length === 2 ? { cmd: "pair", name: words[0], code: words[1] } : usage();
+      if (words.length === 0) return usage();
+      if (words.length === 1) return { cmd: "pair", code: words[0] };
+      return { cmd: "pair", name: joinName(words.slice(0, -1)), code: words.at(-1) };
     case "send":
-    case "query": {
-      const parts = headAndRest(text);
-      return parts === null ? usage() : { cmd: command, name: parts[0], text: parts[1] };
-    }
+    case "query":
+      return words.length === 0 ? usage() : { cmd: command, input: text.trim() };
     case "result": {
       const parts = headAndRest(text);
       return parts === null ? usage() : { cmd: "result", queryId: parts[0], text: parts[1] };
@@ -26620,7 +26726,7 @@ function parseCommand(command, text) {
     }
     default:
       return {
-        error: `unknown command "${command}". Commands: whoami, context, request, pair, send, query, show, accept, reject, result, peers, unpair, set-relay`
+        error: `unknown command "${command}". Commands: whoami, name, context, request, pair, send, query, show, accept, reject, result, peers, unpair, set-relay`
       };
   }
 }
@@ -26666,7 +26772,7 @@ var LocalStore = class {
   // ---- peers -------------------------------------------------------------------
   assertValidName(name) {
     if (!NAME_RE.test(name)) {
-      throw new DuozaClientError("invalid_name", `"${name}" isn't a valid name: use 1-32 letters, digits, _ or -`);
+      throw new DuozaClientError("invalid_name", `"${name}" can't be a name: use up to 32 letters, digits, _ or - (spaces become _), e.g. Gaurav or Gaurav_Sir`);
     }
   }
   listPeers() {
@@ -26692,6 +26798,15 @@ var LocalStore = class {
     this.write("peers.json", [...this.listPeers(), peer]);
     return peer;
   }
+  /** `base`, or `base_2`, `base_3`… when someone already has that name here. */
+  uniqueName(base) {
+    if (this.findPeer(base) === null) return base;
+    for (let i = 2; ; i++) {
+      const suffix = `_${i}`;
+      const candidate = `${base.slice(0, 32 - suffix.length)}${suffix}`;
+      if (this.findPeer(candidate) === null) return candidate;
+    }
+  }
   removePeer(name) {
     const key = name.toLocaleLowerCase();
     this.write(
@@ -26706,9 +26821,12 @@ var LocalStore = class {
   }
   hasPendingPairFor(name, now) {
     const key = name.toLocaleLowerCase();
-    return this.read("pending-pairs.json", []).some((p) => p.name.toLocaleLowerCase() === key && p.expiresAt >= now);
+    return this.read("pending-pairs.json", []).some((p) => p.name?.toLocaleLowerCase() === key && p.expiresAt >= now);
   }
-  /** Consumes the code and returns the nickname it was created for, if still valid. */
+  hasAnyPendingPair(now) {
+    return this.read("pending-pairs.json", []).some((p) => p.expiresAt >= now);
+  }
+  /** Consumes the code. Returns what it was created with (the nickname may be null), or null if unknown/expired. */
   takePendingPair(code, now) {
     const all = this.read("pending-pairs.json", []);
     const hit = all.find((p) => p.code === code);
@@ -26717,7 +26835,7 @@ var LocalStore = class {
       all.filter((p) => p.code !== code && p.expiresAt >= now)
     );
     if (hit === void 0 || hit.expiresAt < now) return null;
-    return hit.name;
+    return { name: hit.name };
   }
   // ---- queries -------------------------------------------------------------------
   addInboundQuery(q) {
@@ -26781,7 +26899,7 @@ var NO_INPUT = /* @__PURE__ */ new Set(["whoami", "peers", "context"]);
 function gitContext() {
   const git = (...args) => {
     try {
-      return execFileSync2("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5e3 }).trim();
+      return execFileSync3("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5e3 }).trim();
     } catch {
       return "";
     }
@@ -26807,9 +26925,13 @@ function minutesUntil(ts) {
 async function run(parsed, duoza, store) {
   switch (parsed.cmd) {
     case "whoami":
-      return `device ${duoza.identity.deviceId}
+      return `name   ${duoza.displayName}
+device ${duoza.identity.deviceId}
 relay  ${resolveRelayUrl(store)}
 home   ${store.home}`;
+    case "name":
+      if (parsed.name === void 0) return `You go by "${duoza.displayName}". Change it with /duo:name <new name>.`;
+      return `You'll now go by "${duoza.setDisplayName(parsed.name)}" for people you pair with from now on.`;
     case "context":
       return gitContext();
     case "set-relay":
@@ -26817,10 +26939,11 @@ home   ${store.home}`;
       return `Relay set to ${parsed.url}`;
     case "request": {
       const { code, expiresAt } = await duoza.request(parsed.name);
+      const who = parsed.name ?? "them";
       return [
-        `Pairing code for ${parsed.name}: ${code}`,
-        `It works once and expires in ${minutesUntil(expiresAt)} minutes.`,
-        `Send it to ${parsed.name}; in their Claude Code they run: /duoza:pair <your name> ${code}`
+        `Pairing code: ${code}`,
+        `It works once and expires in ${minutesUntil(expiresAt)} minutes. They'll see you as "${duoza.displayName}".`,
+        `Send it to ${who}; in their Claude Code they run: /duo:join ${code}`
       ].join("\n");
     }
     case "pair": {
@@ -26828,15 +26951,19 @@ home   ${store.home}`;
       return [
         `Paired with ${name}.`,
         `Safety emoji: ${fingerprint2.join(" ")}`,
-        `Check that ${name} sees exactly the same 4 emoji (call or WhatsApp). If they differ, run /duoza:unpair ${name}.`
+        `Check that ${name} sees exactly the same 4 emoji (call or WhatsApp). If they differ, run /duo:bye ${name}.`
       ].join("\n");
     }
-    case "send":
-      await duoza.send(parsed.name, parsed.text);
-      return `Sent to ${parsed.name}.`;
-    case "query":
-      await duoza.query(parsed.name, parsed.text);
-      return `Request sent to ${parsed.name}. It runs in their Claude only after they accept it; you'll be told when they do.`;
+    case "send": {
+      const { name, text } = duoza.splitTarget(parsed.input);
+      await duoza.send(name, text);
+      return `Sent to ${name}.`;
+    }
+    case "query": {
+      const { name, text } = duoza.splitTarget(parsed.input);
+      await duoza.query(name, text);
+      return `Request sent to ${name}. It runs in their Claude only after they accept it (/duo:ok); you'll be told when they do.`;
+    }
     case "show": {
       const q = duoza.show(parsed.number);
       return [`Request #${q.number} from ${q.fromName} (${q.state}). Its text, line by line:`, quoteBody(q.text)].join("\n");
@@ -26859,15 +26986,16 @@ home   ${store.home}`;
     }
     case "peers": {
       const peers = await duoza.peers();
-      if (peers.length === 0) return "No peers yet. Start with /duoza:request <name>.";
+      if (peers.length === 0) return "No peers yet. Start with /duo:add <name>.";
       return peers.map((p) => `${p.name}  ${p.status}  ${p.fingerprint.join("")}`).join("\n");
     }
-    case "unpair":
-      await duoza.unpair(parsed.name);
-      return `Unpaired ${parsed.name}. They can no longer send you anything.`;
+    case "unpair": {
+      const { name } = await duoza.unpair(parsed.name);
+      return `Unpaired ${name}. They can no longer send you anything.`;
+    }
   }
 }
-var VERSION = "0.2.0";
+var VERSION = "0.3.0";
 var HELP = `Duoza ${VERSION}: connect your Claude Code session with other people's, across accounts and machines.
 
   npx duoza              install/update the plugin, then start Claude Code with Duoza on
@@ -26876,10 +27004,11 @@ var HELP = `Duoza ${VERSION}: connect your Claude Code session with other people
   duoza uninstall        remove the plugin (keeps your identity in ~/.duoza)
   duoza version
 
-Inside Claude Code: /duoza:request <name>, /duoza:pair <name> <code>, /duoza:msg, /duoza:query,
-/duoza:show, /duoza:accept, /duoza:reject, /duoza:peers, /duoza:handoff, /duoza:unpair, /duoza:setup
+Inside Claude Code: /duo:add, /duo:join <code>, /duo:msg [name] <text>, /duo:ask [name] <task>,
+/duo:show <n>, /duo:ok <n>, /duo:no <n>, /duo:who, /duo:share, /duo:bye, /duo:name, /duo:setup
+Or just tell Claude: "tell Gaurav the fix is pushed", "who's online?", "invite Priya".
 
-Low-level (used by the plugin): whoami, context, request, pair, send, query, show, accept, reject,
+Low-level (used by the plugin): whoami, name, context, request, pair, send, query, show, accept, reject,
 result, peers, unpair, set-relay
 `;
 var say = (line) => {

@@ -133,7 +133,7 @@ export function buildRelay(partial: Partial<RelayOptions> & { store: SqliteStore
     const expiresAt = opts.now() + opts.pairTtlMs
     for (let attempt = 0; attempt < 5; attempt++) {
       const code = generatePairingCode()
-      if (store.createPairSlot(normalizePairingCode(code) as string, identity.deviceId, expiresAt)) {
+      if (store.createPairSlot(normalizePairingCode(code) as string, identity.deviceId, expiresAt, body.data.displayName ?? null)) {
         return { code, expiresAt }
       }
     }
@@ -149,8 +149,9 @@ export function buildRelay(partial: Partial<RelayOptions> & { store: SqliteStore
     const code = normalizePairingCode(body.data.code)
     if (code === null) return await reply.code(404).send({ error: "unknown_or_expired_code" })
     const claimant: PublicIdentity = body.data.identity
-    const initiatorId = store.claimPairSlot(code, opts.now())
-    if (initiatorId === null) return await reply.code(404).send({ error: "unknown_or_expired_code" })
+    const slot = store.claimPairSlot(code, opts.now())
+    if (slot === null) return await reply.code(404).send({ error: "unknown_or_expired_code" })
+    const { initiatorId } = slot
     if (initiatorId === claimant.deviceId) return await reply.code(400).send({ error: "cannot_pair_with_self" })
     const initiator = store.getDevice(initiatorId)
     if (initiator === null) return await reply.code(404).send({ error: "unknown_or_expired_code" })
@@ -158,8 +159,12 @@ export function buildRelay(partial: Partial<RelayOptions> & { store: SqliteStore
       return await reply.code(409).send({ error: "key_conflict" })
     }
     store.addPair(initiatorId, claimant.deviceId, opts.now())
-    deliver(initiatorId, { kind: "pair_claimed", code, peer: claimant })
-    return { peer: initiator }
+    const claimantName = body.data.displayName
+    deliver(
+      initiatorId,
+      claimantName === undefined ? { kind: "pair_claimed", code, peer: claimant } : { kind: "pair_claimed", code, peer: claimant, displayName: claimantName },
+    )
+    return slot.displayName === null ? { peer: initiator } : { peer: initiator, displayName: slot.displayName }
   })
 
   // ---- WebSocket -------------------------------------------------------------

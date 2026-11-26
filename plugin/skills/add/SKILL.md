@@ -1,9 +1,9 @@
 ---
-name: request
+name: add
 description: Create a one-time pairing code for someone you want to connect your Claude session with
 disable-model-invocation: true
 allowed-tools: Bash(node *)
-argument-hint: <their name>
+argument-hint: [their name]
 ---
 ```!
 node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs" request <<'DUOZA_ARGS_9c41d7'

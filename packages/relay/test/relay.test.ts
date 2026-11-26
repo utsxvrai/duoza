@@ -45,6 +45,30 @@ describe("health", () => {
   })
 })
 
+describe("display names", () => {
+  it("each side's chosen name travels to the other during pairing", async () => {
+    const utsav = generateIdentity()
+    const gaurav = generateIdentity()
+    const utsavWs = await connectReady(utsav)
+    const start = await postJson(`${relay.url}/v1/pair/start`, { identity: toPublicIdentity(utsav), displayName: "Utsav" })
+    const { code } = start.body as { code: string }
+    const claim = await postJson(`${relay.url}/v1/pair/claim`, { code, identity: toPublicIdentity(gaurav), displayName: "Gaurav_Sir" })
+    expect(claim.status).toBe(200)
+    expect(claim.body).toEqual({ peer: toPublicIdentity(utsav), displayName: "Utsav" })
+    const frame = await utsavWs.waitFor(isDeliver)
+    expect(frame).toMatchObject({ delivery: { kind: "pair_claimed", displayName: "Gaurav_Sir" } })
+  })
+
+  it("names are optional (older clients) and must be a single safe word", async () => {
+    const ok = await postJson(`${relay.url}/v1/pair/start`, { identity: toPublicIdentity(generateIdentity()) })
+    expect(ok.status).toBe(200)
+    for (const bad of ["Gaurav Sir", "x‮", "", "a".repeat(33)]) {
+      const res = await postJson(`${relay.url}/v1/pair/start`, { identity: toPublicIdentity(generateIdentity()), displayName: bad })
+      expect(res.status).toBe(400)
+    }
+  })
+})
+
 describe("pairing", () => {
   it("start returns a readable code; claim returns the initiator's public identity", async () => {
     const utsav = generateIdentity()

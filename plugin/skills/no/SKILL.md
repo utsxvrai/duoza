@@ -1,5 +1,5 @@
 ---
-name: reject
+name: no
 description: Reject a pending Duoza request; the sender is told
 disable-model-invocation: true
 allowed-tools: Bash(node *)

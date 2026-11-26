@@ -5,14 +5,16 @@
 Pair once with a short code. After that you can chat between sessions, send a task that runs in the other person's Claude **only after they accept it**, and hand off the context of what you were doing.
 
 ```
-You                                           Your teammate
-/duoza:request Priya      →  code K7P-42Q  →  /duoza:pair Utsav K7P-42Q
-                    both see the same safety emoji 🐘 🌲 🐵 🌵
-/duoza:msg Priya pushed the fix         →    ← duoza · Utsav: pushed the fix
-/duoza:query Priya run the auth tests   →    ← request #1 (text hidden)
-                                             /duoza:show 1   /duoza:accept 1
-← Priya accepted · ← result: "3 failing, token expiry"   ←  their Claude does it
+You                                         Your teammate
+/duo:add             →  code K7P-42Q  →     /duo:join K7P-42Q
+              both see the same safety emoji 🐘 🌲 🐵 🌵
+/duo:msg pushed the fix              →     ← [duoza · msg · from Utsav] pushed the fix
+/duo:ask run the auth tests          →     ← request #1 (text hidden)
+                                            /duo:show 1   /duo:ok 1
+← accepted · ← result: "3 failing, token expiry"  ←  their Claude does it
 ```
+
+Or just tell Claude: *"invite Priya to Duoza"*, *"tell Priya the fix is pushed"*, *"ask Priya to run the auth tests"*, *"who's online?"*.
 
 Claude Code already lets you message your *own* sessions. Duoza is for *two people*.
 
@@ -32,16 +34,21 @@ No flags, no warning screens: Duoza delivers into the session's own inbox (the o
 
 | Command | What it does |
 |---|---|
-| `/duoza:request <name>` | Make a one-time pairing code (valid 10 minutes) to give to `<name>` |
-| `/duoza:pair <name> <code>` | Use a code someone gave you. `<name>` is what you'll call them |
-| `/duoza:msg <name> <text>` | Send a chat message. It's shown in their session; their Claude doesn't act on it |
-| `/duoza:query <name> <task>` | Ask their Claude to do something. It runs only if they accept |
-| `/duoza:show <n>` | Read incoming request #n before deciding |
-| `/duoza:accept <n>` / `/duoza:reject <n>` | Run it here (with your normal permission prompts), or decline |
-| `/duoza:handoff <name>` | Send a summary of this session: what's done, branch, diff, open questions |
-| `/duoza:peers` | Who you're paired with, online status, safety emoji |
-| `/duoza:unpair <name>` | Disconnect |
-| `/duoza:setup <relay-url>` | Use a different (e.g. self-hosted) relay |
+| `/duo:add [name]` | Make a one-time pairing code (valid 10 minutes) to send to someone |
+| `/duo:join <code>` | Use a code someone sent you |
+| `/duo:msg [name] <text>` | Send a chat message. It's shown in their session; their Claude doesn't act on it |
+| `/duo:ask [name] <task>` | Ask their Claude to do something. It runs only if they accept |
+| `/duo:show <n>` | Read incoming request #n before deciding |
+| `/duo:ok <n>` / `/duo:no <n>` | Run it here (with your normal permission prompts), or decline |
+| `/duo:share [name]` | Send a summary of this session: what's done, branch, diff, open questions |
+| `/duo:who` | Who you're paired with, online status, safety emoji |
+| `/duo:bye [name]` | Disconnect |
+| `/duo:name [new name]` | Show or change the name others see (defaults to your git user.name) |
+| `/duo:setup <relay-url>` | Use a different (e.g. self-hosted) relay |
+
+**Names:** when you pair, each side automatically gets the name the other chose (`/duo:name`), so you don't have to type one. Names can have spaces: `Gaurav Sir` becomes `Gaurav_Sir`, and `/duo:msg Gaurav Sir hi` still works. If you're paired with just one person, leave the name out entirely. The name you choose is visible to the relay while a pairing code is open; messages never are.
+
+**Plain words work too.** Claude has tools to send, ask, list, invite, join and share, and uses them only when *you* ask. There is deliberately no tool to accept a request: only you can, by typing `/duo:ok`.
 
 After pairing, **compare the 4 safety emoji over a call or chat**. If they match, nobody (including the relay) is in the middle.
 
@@ -50,7 +57,7 @@ After pairing, **compare the 4 safety emoji over a call or chat**. If they match
 ```
 Your laptop                              Relay (wss)                          Their laptop
 claude ─ duoza channel (MCP) ──WSS──►  pairing codes, presence,  ◄──WSS── duoza channel ─ claude
-       └ /duoza:* skills ─► duoza CLI   offline mailbox (7 days)          (their own account)
+       └ /duo:* skills ─► duoza CLI   offline mailbox (7 days)          (their own account)
 ~/.duoza: your keys, peers               sees only ciphertext             ~/.duoza
 ```
 
@@ -64,7 +71,7 @@ claude ─ duoza channel (MCP) ──WSS──►  pairing codes, presence,  ◄
 - A **request never runs without the receiver accepting it**. The notice that a request arrived doesn't contain its text, so the receiving Claude can't act on it early. Accepting runs it with the receiver's own permission settings and prompts.
 - **Chat and handoffs are context, not instructions.** Claude is told to show them, not act on them.
 - **Their text can't pose as Duoza.** Every line another person wrote is shown behind `│ `, and control, zero-width and bidi characters become `·`, so a message can't fake a header, a request notice or an "accepted" line.
-- **Your typed text never touches a shell.** The `/duoza:*` commands pass what you type to the CLI on stdin through a quoted heredoc. (We found and fixed exactly this injection during development; see SECURITY.md.)
+- **Your typed text never touches a shell.** The `/duo:*` commands pass what you type to the CLI on stdin through a quoted heredoc. (We found and fixed exactly this injection during development; see SECURITY.md.)
 - Only people you've **paired with** can reach you; the relay refuses everything else. Codes are single-use, expire in 10 minutes, and guessing is rate-limited.
 
 Read [SECURITY.md](SECURITY.md) for the full threat model and what Duoza does *not* protect against.
@@ -85,7 +92,7 @@ docker build -f Dockerfile.relay -t duoza-relay .
 docker run -p 8080:8080 -v duoza-data:/data -e DUOZA_RELAY_DB=/data/duoza-relay.sqlite duoza-relay
 ```
 
-Put it behind TLS, then everyone involved runs `/duoza:setup https://your-relay.example` (both people must use the same relay). A `fly.toml` is included for Fly.io.
+Put it behind TLS, then everyone involved runs `/duo:setup https://your-relay.example` (both people must use the same relay). A `fly.toml` is included for Fly.io.
 
 ## Uninstall
 

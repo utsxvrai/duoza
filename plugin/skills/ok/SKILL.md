@@ -1,5 +1,5 @@
 ---
-name: accept
+name: ok
 description: Accept a pending Duoza request and let Claude run it in this session
 disable-model-invocation: true
 allowed-tools: Bash(node *)

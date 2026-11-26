@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
 import type { Delivery, Identity, Payload, PresenceStatus } from "@duoza/protocol"
 import { fingerprint, normalizePairingCode, openEnvelope, PublicIdentitySchema, sealEnvelope } from "@duoza/protocol"
+import { defaultDisplayName, toDisplayName } from "./display-name.js"
 import { DuozaClientError } from "./errors.js"
 import { RelayConnection } from "./relay-connection.js"
 import type { InboundQuery, LocalStore, Peer } from "./store.js"
@@ -61,42 +62,107 @@ export class Duoza {
     return `${this.relayUrl.replace(/^http/, "ws")}/v1/ws`
   }
 
+  // ---- who I am ----------------------------------------------------------------------
+
+  /** The name I offer to people I pair with: set with `name`, else git's user.name, else the OS username. */
+  get displayName(): string {
+    return this.store.getConfig().displayName ?? defaultDisplayName()
+  }
+
+  setDisplayName(raw: string): string {
+    const name = toDisplayName(raw)
+    if (name === null) throw new DuozaClientError("invalid_name", `"${raw}" can't be a name: use letters, digits, _ or -`)
+    this.store.setConfig({ ...this.store.getConfig(), displayName: name })
+    return name
+  }
+
   // ---- pairing -------------------------------------------------------------------
 
-  /** Creates a one-time code to hand to `name`. */
-  async request(name: string): Promise<{ code: string; expiresAt: number }> {
-    this.store.assertValidName(name)
-    if (this.store.findPeer(name) !== null) {
-      throw new DuozaClientError("name_taken", `you already have a peer called "${name}"`)
+  /**
+   * Creates a one-time code. `name` is what you'll call them; leave it out to use the name they send
+   * when they join.
+   */
+  async request(name?: string): Promise<{ code: string; expiresAt: number }> {
+    if (name !== undefined) {
+      this.store.assertValidName(name)
+      if (this.store.findPeer(name) !== null) {
+        throw new DuozaClientError("name_taken", `you already have a peer called "${name}"`)
+      }
     }
-    const res = await this.post("/v1/pair/start", { identity: this.publicIdentity() })
+    const res = await this.post("/v1/pair/start", { identity: this.publicIdentity(), displayName: this.displayName })
     if (res.status !== 200) throw new DuozaClientError("relay_error", `relay refused to create a code (${res.status})`)
     const { code, expiresAt } = res.body as { code: string; expiresAt: number }
-    this.store.addPendingPair(normalizePairingCode(code) ?? code, name, expiresAt)
+    this.store.addPendingPair(normalizePairingCode(code) ?? code, name ?? null, expiresAt)
     return { code, expiresAt }
   }
 
-  /** Redeems a code someone gave you; `name` is what you'll call them. */
-  async pair(name: string, code: string): Promise<{ name: string; fingerprint: string[] }> {
-    this.store.assertValidName(name)
-    if (this.store.findPeer(name) !== null) {
-      throw new DuozaClientError("name_taken", `you already have a peer called "${name}"`)
+  /** Redeems a code someone gave you. `name` is what you'll call them; leave it out to use the name they chose. */
+  async pair(name: string | undefined, code: string): Promise<{ name: string; fingerprint: string[] }> {
+    if (name !== undefined) {
+      this.store.assertValidName(name)
+      if (this.store.findPeer(name) !== null) {
+        throw new DuozaClientError("name_taken", `you already have a peer called "${name}"`)
+      }
     }
     if (normalizePairingCode(code) === null) {
       throw new DuozaClientError("bad_code", "that doesn't look like a Duoza code (it should look like K7P-42Q)")
     }
-    const res = await this.post("/v1/pair/claim", { code, identity: this.publicIdentity() })
+    const res = await this.post("/v1/pair/claim", { code, identity: this.publicIdentity(), displayName: this.displayName })
     if (res.status === 404) throw new DuozaClientError("bad_code", "that code is wrong, already used, or expired; ask for a new one")
     if (res.status === 429) throw new DuozaClientError("rate_limited", "too many attempts; wait a minute and try again")
     if (res.status === 400) throw new DuozaClientError("bad_code", "you can't pair with yourself")
     if (res.status !== 200) throw new DuozaClientError("relay_error", `relay refused the code (${res.status})`)
-    const peer = PublicIdentitySchema.safeParse((res.body as { peer?: unknown }).peer)
+    const body = res.body as { peer?: unknown; displayName?: unknown }
+    const peer = PublicIdentitySchema.safeParse(body.peer)
     if (!peer.success) throw new DuozaClientError("relay_error", "relay sent a malformed identity")
-    this.store.addPeer(name, peer.data, this.now())
-    return { name, fingerprint: fingerprint(this.identity.signPublicKey, peer.data.signPublicKey) }
+    const finalName = name ?? this.store.uniqueName(toDisplayName(typeof body.displayName === "string" ? body.displayName : "") ?? "friend")
+    this.store.addPeer(finalName, peer.data, this.now())
+    return { name: finalName, fingerprint: fingerprint(this.identity.signPublicKey, peer.data.signPublicKey) }
   }
 
   // ---- sending -------------------------------------------------------------------
+
+  /**
+   * Splits "<name> <message>" where the name may be several words ("Gaurav Sir hi" -> Gaurav_Sir, "hi").
+   * Tries the longest run of leading words (joined with "_") that matches a paired person. With exactly one
+   * paired person the name is optional and the whole input is the message. Otherwise the first word is taken
+   * as the name, so an unknown name is reported by name. The message keeps its own spacing.
+   */
+  splitTarget(input: string): { name: string; text: string } {
+    const trimmed = input.trim()
+    const words = [...trimmed.matchAll(/\S+/g)].map((m) => ({ word: m[0], end: (m.index ?? 0) + m[0].length }))
+    const noMessage = (): DuozaClientError => new DuozaClientError("not_found", "add a message, e.g. /duo:msg Gaurav pushed the fix")
+    // Up to 4 words, including all of them: "Gaurav Sir" alone must be recognised as a name with no message.
+    for (let k = Math.min(4, words.length); k >= 1; k--) {
+      const peer = this.store.findPeer(
+        words
+          .slice(0, k)
+          .map((w) => w.word)
+          .join("_"),
+      )
+      if (peer !== null) {
+        const text = trimmed.slice((words[k - 1] as { end: number }).end).trim()
+        if (text === "") throw noMessage()
+        return { name: peer.name, text }
+      }
+    }
+    if (trimmed === "") throw noMessage()
+    const peers = this.store.listPeers()
+    if (peers.length === 1) return { name: (peers[0] as Peer).name, text: trimmed }
+    const first = words[0] as { word: string; end: number }
+    const text = trimmed.slice(first.end).trim()
+    if (peers.length > 1 && text === "") throw this.whoError()
+    if (text === "") throw noMessage()
+    return { name: first.word, text }
+  }
+
+  /** A paired person by name; with no name, the only paired person (or an error asking who). */
+  resolvePeerName(name?: string): string {
+    if (name !== undefined && name.trim() !== "") return name
+    const peers = this.store.listPeers()
+    if (peers.length === 1) return (peers[0] as Peer).name
+    throw this.whoError()
+  }
 
   async send(name: string, text: string): Promise<void> {
     await this.sendPayload(this.requirePeer(name), { type: "msg", text })
@@ -110,8 +176,10 @@ export class Duoza {
     return { queryId }
   }
 
-  async handoff(name: string, packet: HandoffPacket): Promise<void> {
-    await this.sendPayload(this.requirePeer(name), { type: "handoff", ...packet })
+  async handoff(name: string | undefined, packet: HandoffPacket): Promise<{ to: string }> {
+    const peer = this.requirePeer(this.resolvePeerName(name))
+    await this.sendPayload(peer, { type: "handoff", ...packet })
+    return { to: peer.name }
   }
 
   // ---- receiving a query ---------------------------------------------------------
@@ -162,12 +230,13 @@ export class Duoza {
     }))
   }
 
-  async unpair(name: string): Promise<void> {
-    const peer = this.requirePeer(name)
+  async unpair(name?: string): Promise<{ name: string }> {
+    const peer = this.requirePeer(this.resolvePeerName(name))
     await this.withSender(async (conn) => {
       await conn.unpair(peer.identity.deviceId)
     })
     this.store.removePeer(peer.name)
+    return { name: peer.name }
   }
 
   // ---- listening -------------------------------------------------------------------
@@ -193,9 +262,11 @@ export class Duoza {
   async handleDelivery(delivery: Delivery): Promise<DuozaEvent | null> {
     switch (delivery.kind) {
       case "pair_claimed": {
-        const name = this.store.takePendingPair(delivery.code, this.now())
+        const pending = this.store.takePendingPair(delivery.code, this.now())
         const peer = PublicIdentitySchema.safeParse(delivery.peer)
-        if (name === null || !peer.success) return null
+        if (pending === null || !peer.success) return null
+        // The nickname given with /duo:add wins; otherwise use the name they chose, made unique here.
+        const name = pending.name ?? this.store.uniqueName(toDisplayName(delivery.displayName ?? "") ?? "friend")
         try {
           this.store.addPeer(name, peer.data, this.now())
         } catch {
@@ -256,6 +327,19 @@ export class Duoza {
     return { ...q, fromName: this.store.findPeerByDevice(q.from)?.name ?? "(unpaired)" }
   }
 
+  private whoError(): DuozaClientError {
+    const names = this.store.listPeers().map((p) => p.name)
+    if (names.length === 0) {
+      return new DuozaClientError(
+        "unknown_peer",
+        this.store.hasAnyPendingPair(this.now())
+          ? "they haven't used your code yet (or your Duoza session isn't running to hear about it)"
+          : "you're not paired with anyone yet: start with /duo:add",
+      )
+    }
+    return new DuozaClientError("unknown_peer", `who should get it? Start with their name: ${names.join(", ")}`)
+  }
+
   private requirePeer(name: string): Peer {
     const peer = this.store.findPeer(name)
     if (peer === null) {
@@ -268,7 +352,7 @@ export class Duoza {
       const known = this.store.listPeers().map((p) => p.name)
       throw new DuozaClientError(
         "unknown_peer",
-        `no peer called "${name}"${known.length > 0 ? ` (you have: ${known.join(", ")})` : " (pair first with /duoza:request)"}`,
+        `no peer called "${name}"${known.length > 0 ? ` (you have: ${known.join(", ")})` : " (pair first with /duo:add)"}`,
       )
     }
     return peer

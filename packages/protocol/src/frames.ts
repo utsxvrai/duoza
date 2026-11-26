@@ -26,8 +26,20 @@ export const PublicIdentitySchema = z
 
 // ---- HTTP bodies -----------------------------------------------------------
 
-export const PairStartBodySchema = z.object({ identity: PublicIdentitySchema }).strict()
-export const PairClaimBodySchema = z.object({ code: z.string().min(1).max(32), identity: PublicIdentitySchema }).strict()
+/**
+ * The name a person goes by, offered to whoever they pair with (that side may rename it locally).
+ * One word: letters, marks, digits, _ or -. Not secret: the relay sees it while the pairing code is open.
+ */
+export const DisplayNameSchema = z
+  .string()
+  .min(1)
+  .max(32)
+  .regex(/^[\p{L}\p{M}\p{N}_-]+$/u)
+
+export const PairStartBodySchema = z.object({ identity: PublicIdentitySchema, displayName: DisplayNameSchema.optional() }).strict()
+export const PairClaimBodySchema = z
+  .object({ code: z.string().min(1).max(32), identity: PublicIdentitySchema, displayName: DisplayNameSchema.optional() })
+  .strict()
 
 // ---- WebSocket frames: client -> relay -------------------------------------
 
@@ -58,7 +70,7 @@ export type PresenceStatus = "online" | "busy" | "offline"
 /** Things the relay queues for a device until it acks them. */
 export type Delivery =
   | { kind: "envelope"; envelope: z.infer<typeof EnvelopeSchema> }
-  | { kind: "pair_claimed"; code: string; peer: z.infer<typeof PublicIdentitySchema> }
+  | { kind: "pair_claimed"; code: string; peer: z.infer<typeof PublicIdentitySchema>; displayName?: string }
   | { kind: "unpaired"; peer: string }
 
 export type RelayErrorCode = "bad_frame" | "auth_failed" | "key_conflict" | "forbidden" | "not_paired" | "mailbox_full" | "rate_limited"

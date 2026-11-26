@@ -36,12 +36,15 @@ interface QueriesFile {
 
 interface PendingPair {
   code: string
-  name: string
+  /** The nickname given when creating the code, or null to use the name the other person sends. */
+  name: string | null
   expiresAt: number
 }
 
 export interface ClientConfig {
   relayUrl?: string
+  /** The name this person goes by, offered to people they pair with. */
+  displayName?: string
 }
 
 const NAME_RE = /^[\p{L}\p{M}\p{N}_-]{1,32}$/u
@@ -80,7 +83,7 @@ export class LocalStore {
 
   assertValidName(name: string): void {
     if (!NAME_RE.test(name)) {
-      throw new DuozaClientError("invalid_name", `"${name}" isn't a valid name: use 1-32 letters, digits, _ or -`)
+      throw new DuozaClientError("invalid_name", `"${name}" can't be a name: use up to 32 letters, digits, _ or - (spaces become _), e.g. Gaurav or Gaurav_Sir`)
     }
   }
 
@@ -111,6 +114,16 @@ export class LocalStore {
     return peer
   }
 
+  /** `base`, or `base_2`, `base_3`… when someone already has that name here. */
+  uniqueName(base: string): string {
+    if (this.findPeer(base) === null) return base
+    for (let i = 2; ; i++) {
+      const suffix = `_${i}`
+      const candidate = `${base.slice(0, 32 - suffix.length)}${suffix}`
+      if (this.findPeer(candidate) === null) return candidate
+    }
+  }
+
   removePeer(name: string): void {
     const key = name.toLocaleLowerCase()
     this.write(
@@ -121,18 +134,22 @@ export class LocalStore {
 
   // ---- pairing codes I handed out ----------------------------------------------
 
-  addPendingPair(code: string, name: string, expiresAt: number): void {
+  addPendingPair(code: string, name: string | null, expiresAt: number): void {
     const others = this.read<PendingPair[]>("pending-pairs.json", []).filter((p) => p.code !== code)
     this.write("pending-pairs.json", [...others, { code, name, expiresAt }])
   }
 
   hasPendingPairFor(name: string, now: number): boolean {
     const key = name.toLocaleLowerCase()
-    return this.read<PendingPair[]>("pending-pairs.json", []).some((p) => p.name.toLocaleLowerCase() === key && p.expiresAt >= now)
+    return this.read<PendingPair[]>("pending-pairs.json", []).some((p) => p.name?.toLocaleLowerCase() === key && p.expiresAt >= now)
   }
 
-  /** Consumes the code and returns the nickname it was created for, if still valid. */
-  takePendingPair(code: string, now: number): string | null {
+  hasAnyPendingPair(now: number): boolean {
+    return this.read<PendingPair[]>("pending-pairs.json", []).some((p) => p.expiresAt >= now)
+  }
+
+  /** Consumes the code. Returns what it was created with (the nickname may be null), or null if unknown/expired. */
+  takePendingPair(code: string, now: number): { name: string | null } | null {
     const all = this.read<PendingPair[]>("pending-pairs.json", [])
     const hit = all.find((p) => p.code === code)
     this.write(
@@ -140,7 +157,7 @@ export class LocalStore {
       all.filter((p) => p.code !== code && p.expiresAt >= now),
     )
     if (hit === undefined || hit.expiresAt < now) return null
-    return hit.name
+    return { name: hit.name }
   }
 
   // ---- queries -------------------------------------------------------------------

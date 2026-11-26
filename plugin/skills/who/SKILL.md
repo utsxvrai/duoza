@@ -1,5 +1,5 @@
 ---
-name: peers
+name: who
 description: List the people you're paired with, whether they're online, and their safety emoji
 disable-model-invocation: true
 allowed-tools: Bash(node *)

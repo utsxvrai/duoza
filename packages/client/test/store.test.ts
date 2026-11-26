@@ -51,7 +51,7 @@ describe("LocalStore", () => {
   it("pending pair codes are consumed once and expire", () => {
     const store = new LocalStore(freshHome())
     store.addPendingPair("K7P42Q", "Priyanshi", 100)
-    expect(store.takePendingPair("K7P42Q", 50)).toBe("Priyanshi")
+    expect(store.takePendingPair("K7P42Q", 50)).toEqual({ name: "Priyanshi" })
     expect(store.takePendingPair("K7P42Q", 50)).toBeNull()
     store.addPendingPair("AAAAAA", "Late", 100)
     expect(store.takePendingPair("AAAAAA", 101)).toBeNull()

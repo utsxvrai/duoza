@@ -8,6 +8,7 @@ export type { ClientFrame, Delivery, PresenceStatus, RelayErrorCode, ServerFrame
 export {
   ClientFrameSchema,
   CloseCode,
+  DisplayNameSchema,
   PairClaimBodySchema,
   PairStartBodySchema,
   PublicIdentitySchema,

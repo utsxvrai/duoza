@@ -41,6 +41,11 @@ export class SqliteStore {
       );
       CREATE INDEX IF NOT EXISTS mailbox_to ON mailbox (to_id, seq);
     `)
+    // 0.3: the inviter's display name travels with the code. Databases from earlier versions lack the column.
+    const slotColumns = this.db.prepare("PRAGMA table_info(pair_slots)").all() as Array<{ name: string }>
+    if (!slotColumns.some((c) => c.name === "display_name")) {
+      this.db.exec("ALTER TABLE pair_slots ADD COLUMN display_name TEXT")
+    }
   }
 
   /** Registers a device, or confirms it presents the same keys it registered with. */
@@ -67,20 +72,22 @@ export class SqliteStore {
   }
 
   /** Returns false if the code is already taken (caller retries with a new one). */
-  createPairSlot(code: string, initiatorId: string, expiresAt: number): boolean {
-    const res = this.db.prepare("INSERT OR IGNORE INTO pair_slots (code, initiator_id, expires_at) VALUES (?, ?, ?)").run(code, initiatorId, expiresAt)
+  createPairSlot(code: string, initiatorId: string, expiresAt: number, displayName: string | null = null): boolean {
+    const res = this.db
+      .prepare("INSERT OR IGNORE INTO pair_slots (code, initiator_id, expires_at, display_name) VALUES (?, ?, ?, ?)")
+      .run(code, initiatorId, expiresAt, displayName)
     return res.changes === 1
   }
 
   /** Atomically consumes a live slot. Expired or unknown codes return null. */
-  claimPairSlot(code: string, now: number): string | null {
-    const claim = this.db.transaction((): string | null => {
-      const row = this.db.prepare("SELECT initiator_id, expires_at FROM pair_slots WHERE code = ?").get(code) as
-        | { initiator_id: string; expires_at: number }
+  claimPairSlot(code: string, now: number): { initiatorId: string; displayName: string | null } | null {
+    const claim = this.db.transaction((): { initiatorId: string; displayName: string | null } | null => {
+      const row = this.db.prepare("SELECT initiator_id, expires_at, display_name FROM pair_slots WHERE code = ?").get(code) as
+        | { initiator_id: string; expires_at: number; display_name: string | null }
         | undefined
       if (row === undefined) return null
       this.db.prepare("DELETE FROM pair_slots WHERE code = ?").run(code)
-      return row.expires_at >= now ? row.initiator_id : null
+      return row.expires_at >= now ? { initiatorId: row.initiator_id, displayName: row.display_name } : null
     })
     return claim()
   }
